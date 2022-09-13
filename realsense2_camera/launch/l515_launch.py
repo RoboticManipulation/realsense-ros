@@ -70,6 +70,8 @@ configurable_parameters = [{'name': 'camera_name',                  'default': '
                            {'name': 'depth_module.gain.2',         'default': '16', 'description': 'Initial value for hdr_merge filter'},
                            {'name': 'wait_for_device_timeout',      'default': '-1.', 'description': 'Timeout for waiting for device to connect (Seconds)'},
                            {'name': 'reconnect_timeout',            'default': '6.', 'description': 'Timeout(seconds) between consequtive reconnection attempts'},
+                           {'name': 'publish_tf',            'default': 'false', 'description': 'Publishes tfs when true'},
+                           {'name': 'use_sim_time',            'default': 'false', 'description': 'Use sim time or not'},
                           ]
 
 def declare_configurable_parameters(parameters):
@@ -118,8 +120,11 @@ def generate_launch_description():
                 namespace=LaunchConfiguration("camera_name"),
                 name=LaunchConfiguration("camera_name"),
                 executable='realsense2_camera_node',
-                parameters=[set_configurable_parameters(configurable_parameters)
-                            ],
+                parameters=[
+                    set_configurable_parameters(configurable_parameters),
+                    #{"use_sim_time": False},
+                    #{"publish_tf": False},
+                    ],
                 output='screen',
                 arguments=['--ros-args', '--log-level', LaunchConfiguration('log_level')],
                 emulate_tty=True,
