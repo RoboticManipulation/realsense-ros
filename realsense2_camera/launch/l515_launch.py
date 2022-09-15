@@ -33,7 +33,7 @@ configurable_parameters = [{'name': 'camera_name',                  'default': '
                            {'name': 'output',                       'default': 'screen', 'description': 'pipe node output [screen|log]'},
                            {'name': 'depth_module.profile',         'default': '0,0,0', 'description': 'depth module profile'},                           
                            {'name': 'enable_depth',                 'default': 'true', 'description': 'enable depth stream'},
-                           {'name': 'rgb_camera.profile',           'default': '1920x1080x30', 'description': 'color image width'},
+                           {'name': 'rgb_camera.profile',           'default': '1920x1080x6', 'description': 'color image width'},
                            {'name': 'enable_color',                 'default': 'true', 'description': 'enable color stream'},
                            {'name': 'enable_infra1',                'default': 'false', 'description': 'enable infra1 stream'},
                            {'name': 'enable_infra2',                'default': 'false', 'description': 'enable infra2 stream'},
