@@ -122,6 +122,9 @@ def generate_launch_description():
                 namespace=LaunchConfiguration("camera_name"),
                 name=LaunchConfiguration("camera_name"),
                 executable='realsense2_camera_node',
+                remappings=[
+                    ('/camera/color/camera_info', '/camera/color/camera_info_factory'),
+                 ]
                 parameters=[
                     set_configurable_parameters(configurable_parameters),
                     #{"use_sim_time": False},
