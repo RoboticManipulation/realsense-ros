@@ -147,4 +147,16 @@ def generate_launch_description():
                 arguments=['--ros-args', '--log-level', LaunchConfiguration('log_level')],
                 emulate_tty=True,
                 ),
+            launch_ros.actions.Node(
+                package='realsense2_camera',
+                namespace=LaunchConfiguration("camera_name"),
+                name=LaunchConfiguration("camera_name"),
+                executable='republish_cam_info',
+                parameters=[
+                    #{"use_sim_time": False},
+                    ],
+                output='screen',
+                arguments=['--ros-args', '--log-level', LaunchConfiguration('log_level')],
+                emulate_tty=True,
+                ),
         ])
