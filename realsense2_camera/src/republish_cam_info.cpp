@@ -23,22 +23,22 @@ class RepublishCameraInfo : public rclcpp::Node
 
     void topic_callback(const sensor_msgs::CameraInfo& camera_info_msgs)
     {
-      sensor_msgs::CameraInfo message = *camera_info_msgs;
+      sensor_msgs::CameraInfo message = camera_info_msgs;
 
       //std::array<double, 5> d = {0.10119861778233893, -0.1954721576865799, 0.0012448486976424538, 0.00191865834729546, 0.0};
       double d_arr[5] = {0.10119861778233893, -0.1954721576865799, 0.0012448486976424538, 0.00191865834729546, 0.0};
       std::vector<double> d_vec(d_arr, d_arr+5);
-      message.d = d_vec;
+      message.D = d_vec;
 
       std::array<double, 9> k_std_arr = {1383.6978295014662, 0.0, 975.384325483263, 0.0, 1384.8496632036263, 574.7937430384186, 0.0, 0.0, 1.0};
       //double k_arr[9] = {1383.6978295014662, 0.0, 975.384325483263, 0.0, 1384.8496632036263, 574.7937430384186, 0.0, 0.0, 1.0};
       //std::vector<double> k_vec(k_arr, k_arr+9);
-      message.k = k_std_arr;
+      message.K = k_std_arr;
 
       std::array<double, 12> p_std_arr = {1383.6978295014662, 0.0, 975.384325483263, 0.0, 0.0, 1384.8496632036263, 574.7937430384186, 0.0, 0.0, 0.0, 1.0, 0.0};
       //double p_arr[12] = {1383.6978295014662, 0.0, 975.384325483263, 0.0, 0.0, 1384.8496632036263, 574.7937430384186, 0.0, 0.0, 0.0, 1.0, 0.0};
       //std::vector<double> p_vec(p_arr, p_arr+12);
-      message.p = p_std_arr;
+      message.P = p_std_arr;
 
       //Publish the new message
       pub.publish(message);
