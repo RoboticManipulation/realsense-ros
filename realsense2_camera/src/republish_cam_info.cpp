@@ -1,7 +1,3 @@
-//#include <chrono>
-//#include <functional>
-//#include <memory>
-//#include <inttypes.h>
 #include "ros/ros.h"
 #include "std_msgs/String.h"
 #include "sensor_msgs/CameraInfo.h"
@@ -27,19 +23,14 @@ class RepublishCameraInfo
       sensor_msgs::CameraInfo message = sensor_msgs::CameraInfo();
       message = camera_info_msgs;
 
-      //std::array<double, 5> d = {0.10119861778233893, -0.1954721576865799, 0.0012448486976424538, 0.00191865834729546, 0.0};
       double d_arr[5] = {0.10119861778233893, -0.1954721576865799, 0.0012448486976424538, 0.00191865834729546, 0.0};
       std::vector<double> d_vec(d_arr, d_arr+5);
       message.D = d_vec;
 
       boost::array<double, 9> k_std_arr = {1383.6978295014662, 0.0, 975.384325483263, 0.0, 1384.8496632036263, 574.7937430384186, 0.0, 0.0, 1.0};
-      //double k_arr[9] = {1383.6978295014662, 0.0, 975.384325483263, 0.0, 1384.8496632036263, 574.7937430384186, 0.0, 0.0, 1.0};
-      //std::vector<double> k_vec(k_arr, k_arr+9);
       message.K = k_std_arr;
 
       boost::array<double, 12> p_std_arr = {1383.6978295014662, 0.0, 975.384325483263, 0.0, 0.0, 1384.8496632036263, 574.7937430384186, 0.0, 0.0, 0.0, 1.0, 0.0};
-      //double p_arr[12] = {1383.6978295014662, 0.0, 975.384325483263, 0.0, 0.0, 1384.8496632036263, 574.7937430384186, 0.0, 0.0, 0.0, 1.0, 0.0};
-      //std::vector<double> p_vec(p_arr, p_arr+12);
       message.P = p_std_arr;
 
       //Publish the new message
