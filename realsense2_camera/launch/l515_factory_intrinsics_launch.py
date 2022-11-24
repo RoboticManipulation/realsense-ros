@@ -122,9 +122,6 @@ def generate_launch_description():
                 namespace=LaunchConfiguration("camera_name"),
                 name=LaunchConfiguration("camera_name"),
                 executable='realsense2_camera_node',
-                remappings=[
-                    ('/camera/color/camera_info', '/camera/color/camera_info_factory'),
-                 ]
                 parameters=[
                     set_configurable_parameters(configurable_parameters),
                     #{"use_sim_time": False},
@@ -143,18 +140,6 @@ def generate_launch_description():
                 parameters=[set_configurable_parameters(configurable_parameters)
                             , PythonExpression([LaunchConfiguration("config_file")])
                             ],
-                output='screen',
-                arguments=['--ros-args', '--log-level', LaunchConfiguration('log_level')],
-                emulate_tty=True,
-                ),
-            launch_ros.actions.Node(
-                package='realsense2_camera',
-                namespace=LaunchConfiguration("camera_name"),
-                name=LaunchConfiguration("camera_name"),
-                executable='republish_cam_info',
-                parameters=[
-                    #{"use_sim_time": False},
-                    ],
                 output='screen',
                 arguments=['--ros-args', '--log-level', LaunchConfiguration('log_level')],
                 emulate_tty=True,

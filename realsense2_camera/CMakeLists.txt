@@ -121,7 +121,7 @@ set(SOURCES
     src/named_filter.cpp
     src/profile_manager.cpp
     src/image_publisher.cpp
-    src/republish_cam_info.cpp
+    #src/republish_cam_info.cpp
   )
 
 if(NOT DEFINED ENV{ROS_DISTRO})
@@ -200,6 +200,9 @@ set(dependencies
   diagnostic_updater
 )
 
+add_executable(republish_cam_info src/republish_cam_info.cpp)
+ament_target_dependencies(republish_cam_info rclcpp sensor_msgs)
+
 ament_target_dependencies(${PROJECT_NAME}
   ${dependencies}
 )
@@ -224,6 +227,10 @@ install(TARGETS ${PROJECT_NAME}
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
 )
+
+install(TARGETS
+  republish_cam_info
+  DESTINATION lib/${PROJECT_NAME})
 
 # Install headers
 install(
