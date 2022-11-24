@@ -24,7 +24,7 @@ class RepublishCameraInfo
 
     void topic_callback(const sensor_msgs::CameraInfo& camera_info_msgs)
     {
-      message = sensor_msgs::CameraInfo();
+      sensor_msgs::CameraInfo message = sensor_msgs::CameraInfo();
       message = camera_info_msgs;
 
       //std::array<double, 5> d = {0.10119861778233893, -0.1954721576865799, 0.0012448486976424538, 0.00191865834729546, 0.0};
