@@ -23,6 +23,11 @@ find_package(catkin REQUIRED COMPONENTS
     diagnostic_updater
     )
 
+#find_package(
+#  Boost
+#  REQUIRED COMPONENTS array
+#)
+
 if(BUILD_WITH_OPENMP)
     find_package(OpenMP)
     if(NOT OpenMP_FOUND)
