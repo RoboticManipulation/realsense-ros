@@ -123,6 +123,10 @@ target_link_libraries(${PROJECT_NAME}
     ${CMAKE_THREAD_LIBS_INIT}
     )
 
+add_executable(republish_cam_info src/republish_cam_info.cpp)
+target_link_libraries(republish_cam_info ${catkin_LIBRARIES})
+add_dependencies(republish_cam_info std_msgs sensor_msgs)
+
 if(WIN32)
 set_target_properties(${realsense2_LIBRARY} PROPERTIES MAP_IMPORTED_CONFIG_RELWITHDEBINFO RELEASE)
 target_link_libraries(${PROJECT_NAME}
@@ -130,7 +134,6 @@ target_link_libraries(${PROJECT_NAME}
     realsense2::realsense-file
     )
 endif()
-
 
 # Install nodelet library
 install(TARGETS ${PROJECT_NAME}
