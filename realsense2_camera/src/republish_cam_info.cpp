@@ -9,13 +9,14 @@
 #include <array>
 #include <vector>
 
-class RepublishCameraInfo : public rclcpp::Node
+class RepublishCameraInfo
 {
   private:
     ros::Subscriber sub;
     ros::Publisher pub;
 
-  public:RepublishCameraInfo(ros::NodeHandle *nh)
+  public:
+    RepublishCameraInfo(ros::NodeHandle *nh)
     {
       sub = nh->subscribe("/camera/color/camera_info_factory", 1000,&RepublishCameraInfo::topic_callback, this);
       pub = nh->advertise<sensor_msgs::CameraInfo>("/camera/color/camera_info", 10);
