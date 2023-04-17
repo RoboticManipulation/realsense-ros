@@ -1,3 +1,17 @@
+// Copyright 2023 Intel Corporation. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include "../include/base_realsense_node.h"
 #include "assert.h"
 #include <algorithm>
@@ -7,12 +21,19 @@
 #include <fstream>
 #include <image_publisher.h>
 
+// Header files for disabling intra-process comms for static broadcaster.
+#include <rclcpp/publisher_options.hpp>
+// This header file is not available in ROS 2 Dashing.
+#ifndef DASHING
+#include <tf2_ros/qos.hpp>
+#endif
+
 using namespace realsense2_camera;
 
 SyncedImuPublisher::SyncedImuPublisher(rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_publisher, 
                                        std::size_t waiting_list_size):
             _publisher(imu_publisher), _pause_mode(false),
-            _waiting_list_size(waiting_list_size)
+            _waiting_list_size(waiting_list_size), _is_enabled(false)
             {}
 
 SyncedImuPublisher::~SyncedImuPublisher()
@@ -77,21 +98,37 @@ BaseRealSenseNode::BaseRealSenseNode(rclcpp::Node& node,
     _parameters(parameters),
     _dev(dev),
     _json_file_path(""),
+    _depth_scale_meters(0),
+    _clipping_distance(0),
+    _linear_accel_cov(0),
+    _angular_velocity_cov(0),
+    _hold_back_imu_for_frames(false),
+    _publish_tf(false),
     _tf_publish_rate(TF_PUBLISH_RATE),
+    _diagnostics_period(0),
     _use_intra_process(use_intra_process),
     _is_initialized_time_base(false),
+    _camera_time_base(0),
     _sync_frames(SYNC_FRAMES),
-    _is_profile_changed(false)
+    _pointcloud(false),
+    _publish_odom_tf(false),
+    _imu_sync_method(imu_sync_method::NONE),
+    _is_profile_changed(false),
+    _is_align_depth_changed(false)
 {
     if ( use_intra_process )
     {
         ROS_INFO("Intra-Process communication enabled");
     }
-    else
-    {
-        // intra-process requirment of QoS.durability=Volatile cannot be fulfilled with `StaticTransformBroadcaster` as it only support `TransientLocal` durability.
-        _static_tf_broadcaster = std::make_shared<tf2_ros::StaticTransformBroadcaster>(node);
-    }
+
+    // intra-process do not support latched QoS, so we need to disable intra-process for this topic
+    rclcpp::PublisherOptionsWithAllocator<std::allocator<void>> options;
+    options.use_intra_process_comm = rclcpp::IntraProcessSetting::Disable;
+    #ifndef DASHING
+    _static_tf_broadcaster = std::make_shared<tf2_ros::StaticTransformBroadcaster>(node, tf2_ros::StaticBroadcasterQoS(), std::move(options));
+    #else
+    _static_tf_broadcaster = std::make_shared<tf2_ros::StaticTransformBroadcaster>(node, rclcpp::QoS(100), std::move(options));
+    #endif
 
     _image_format[1] = CV_8UC1;    // CVBridge type
     _image_format[2] = CV_16UC1;    // CVBridge type
@@ -154,10 +191,26 @@ void BaseRealSenseNode::setupFilters()
     _filters.push_back(std::make_shared<NamedFilter>(std::make_shared<rs2::temporal_filter>(), _parameters, _logger));
     _filters.push_back(std::make_shared<NamedFilter>(std::make_shared<rs2::hole_filling_filter>(), _parameters, _logger));
     _filters.push_back(std::make_shared<NamedFilter>(std::make_shared<rs2::disparity_transform>(false), _parameters, _logger));
-    _align_depth_filter = std::make_shared<NamedFilter>(std::make_shared<rs2::align>(RS2_STREAM_COLOR), _parameters, _logger);
+
+    /* 
+    update_align_depth_func is being used in the align depth filter for triggiring the thread that monitors profile
+    changes (_monitoring_pc) on every disable/enable of the align depth filter. This filter enablement/disablement affects
+    several topics creation/destruction, therefore, refreshing the topics is required similarly to what is done when turning on/off a sensor.
+    See BaseRealSenseNode::monitoringProfileChanges() as reference.
+    */ 
+    std::function<void(const rclcpp::Parameter&)> update_align_depth_func = [this](const rclcpp::Parameter&){
+        {
+            std::lock_guard<std::mutex> lock_guard(_profile_changes_mutex);
+            _is_align_depth_changed = true;
+        }
+        _cv_mpc.notify_one();
+    };
+    _align_depth_filter = std::make_shared<AlignDepthFilter>(std::make_shared<rs2::align>(RS2_STREAM_COLOR), update_align_depth_func, _parameters, _logger);
     _filters.push_back(_align_depth_filter);
+
     _colorizer_filter = std::make_shared<NamedFilter>(std::make_shared<rs2::colorizer>(), _parameters, _logger); 
     _filters.push_back(_colorizer_filter);
+
     _pc_filter = std::make_shared<PointcloudFilter>(std::make_shared<rs2::pointcloud>(), _node, _parameters, _logger);
     _filters.push_back(_pc_filter);
 }
@@ -310,7 +363,7 @@ void BaseRealSenseNode::FillImuData_Copy(const CimuData imu_data, std::deque<sen
 
 void BaseRealSenseNode::ImuMessage_AddDefaultValues(sensor_msgs::msg::Imu& imu_msg)
 {
-    imu_msg.header.frame_id = DEFAULT_IMU_OPTICAL_FRAME_ID;
+    imu_msg.header.frame_id = IMU_OPTICAL_FRAME_ID;
     imu_msg.orientation.x = 0.0;
     imu_msg.orientation.y = 0.0;
     imu_msg.orientation.z = 0.0;
@@ -384,6 +437,13 @@ void BaseRealSenseNode::imu_callback(rs2::frame frame)
 
     auto stream_index = (stream == GYRO.first)?GYRO:ACCEL;
     rclcpp::Time t(frameSystemTimeSec(frame));
+
+    if(_imu_publishers.find(stream_index) == _imu_publishers.end())
+    {
+        ROS_DEBUG("Received IMU callback while topic does not exist");
+        return;
+    }
+
     if (0 != _imu_publishers[stream_index]->get_subscription_count())
     {
         auto imu_msg = sensor_msgs::msg::Imu();
@@ -462,13 +522,13 @@ void BaseRealSenseNode::pose_callback(rs2::frame frame)
         v_msg.vector.x = tfv.x();
         v_msg.vector.y = tfv.y();
         v_msg.vector.z = tfv.z();
-	
+    
         tfv = tf2::Vector3(-pose.angular_velocity.z, -pose.angular_velocity.x, pose.angular_velocity.y);
         tfv=tf2::quatRotate(q,tfv);
         geometry_msgs::msg::Vector3Stamped om_msg;
         om_msg.vector.x = tfv.x();
         om_msg.vector.y = tfv.y();
-        om_msg.vector.z = tfv.z();	
+        om_msg.vector.z = tfv.z();    
 
         nav_msgs::msg::Odometry odom_msg;
 
@@ -498,123 +558,121 @@ void BaseRealSenseNode::pose_callback(rs2::frame frame)
 void BaseRealSenseNode::frame_callback(rs2::frame frame)
 {
     _synced_imu_publisher->Pause();
-    try{
-        double frame_time = frame.get_timestamp();
+    double frame_time = frame.get_timestamp();
 
-        // We compute a ROS timestamp which is based on an initial ROS time at point of first frame,
-        // and the incremental timestamp from the camera.
-        // In sync mode the timestamp is based on ROS time
-        bool placeholder_false(false);
-        if (_is_initialized_time_base.compare_exchange_strong(placeholder_false, true) )
+    // We compute a ROS timestamp which is based on an initial ROS time at point of first frame,
+    // and the incremental timestamp from the camera.
+    // In sync mode the timestamp is based on ROS time
+    bool placeholder_false(false);
+    if (_is_initialized_time_base.compare_exchange_strong(placeholder_false, true) )
+    {
+        _is_initialized_time_base = setBaseTime(frame_time, frame.get_frame_timestamp_domain());
+    }
+
+    rclcpp::Time t(frameSystemTimeSec(frame));
+    if (frame.is<rs2::frameset>())
+    {
+        ROS_DEBUG("Frameset arrived.");
+        auto frameset = frame.as<rs2::frameset>();
+        ROS_DEBUG("List of frameset before applying filters: size: %d", static_cast<int>(frameset.size()));
+        for (auto it = frameset.begin(); it != frameset.end(); ++it)
         {
-            _is_initialized_time_base = setBaseTime(frame_time, frame.get_frame_timestamp_domain());
+            auto f = (*it);
+            auto stream_type = f.get_profile().stream_type();
+            auto stream_index = f.get_profile().stream_index();
+            auto stream_format = f.get_profile().format();
+            auto stream_unique_id = f.get_profile().unique_id();
+
+            ROS_DEBUG("Frameset contain (%s, %d, %s %d) frame. frame_number: %llu ; frame_TS: %f ; ros_TS(NSec): %lu",
+                        rs2_stream_to_string(stream_type), stream_index, rs2_format_to_string(stream_format), stream_unique_id, frame.get_frame_number(), frame_time, t.nanoseconds());
+        }
+        // Clip depth_frame for max range:
+        rs2::depth_frame original_depth_frame = frameset.get_depth_frame();
+        if (original_depth_frame && _clipping_distance > 0)
+        {
+            clip_depth(original_depth_frame, _clipping_distance);
         }
 
-        rclcpp::Time t(frameSystemTimeSec(frame));
-        if (frame.is<rs2::frameset>())
+        ROS_DEBUG("num_filters: %d", static_cast<int>(_filters.size()));
+        for (auto filter_it : _filters)
         {
-            ROS_DEBUG("Frameset arrived.");
-            auto frameset = frame.as<rs2::frameset>();
-            ROS_DEBUG("List of frameset before applying filters: size: %d", static_cast<int>(frameset.size()));
-            for (auto it = frameset.begin(); it != frameset.end(); ++it)
-            {
-                auto f = (*it);
-                auto stream_type = f.get_profile().stream_type();
-                auto stream_index = f.get_profile().stream_index();
-                auto stream_format = f.get_profile().format();
-                auto stream_unique_id = f.get_profile().unique_id();
+            frameset = filter_it->Process(frameset);
+        }
 
-                ROS_DEBUG("Frameset contain (%s, %d, %s %d) frame. frame_number: %llu ; frame_TS: %f ; ros_TS(NSec): %lu",
-                            rs2_stream_to_string(stream_type), stream_index, rs2_format_to_string(stream_format), stream_unique_id, frame.get_frame_number(), frame_time, t.nanoseconds());
+        ROS_DEBUG("List of frameset after applying filters: size: %d", static_cast<int>(frameset.size()));
+        bool sent_depth_frame(false);
+        for (auto it = frameset.begin(); it != frameset.end(); ++it)
+        {
+            auto f = (*it);
+            auto stream_type = f.get_profile().stream_type();
+            auto stream_index = f.get_profile().stream_index();
+            auto stream_format = f.get_profile().format();
+            stream_index_pair sip{stream_type,stream_index};
+
+            ROS_DEBUG("Frameset contain (%s, %d, %s) frame. frame_number: %llu ; frame_TS: %f ; ros_TS(NSec): %lu", 
+                rs2_stream_to_string(stream_type), stream_index, rs2_format_to_string(stream_format), f.get_frame_number(), frame_time, t.nanoseconds());
+            if (f.is<rs2::video_frame>())
+                ROS_DEBUG_STREAM("frame: " << f.as<rs2::video_frame>().get_width() << " x " << f.as<rs2::video_frame>().get_height());
+
+            if (f.is<rs2::points>())
+            {
+                publishPointCloud(f.as<rs2::points>(), t, frameset);
+                continue;
             }
-            // Clip depth_frame for max range:
-            rs2::depth_frame original_depth_frame = frameset.get_depth_frame();
-            if (original_depth_frame && _clipping_distance > 0)
+            if (stream_type == RS2_STREAM_DEPTH)
             {
-                clip_depth(original_depth_frame, _clipping_distance);
-            }
-
-            ROS_DEBUG("num_filters: %d", static_cast<int>(_filters.size()));
-            for (auto filter_it : _filters)
-            {
-                frameset = filter_it->Process(frameset);
-            }
-
-            ROS_DEBUG("List of frameset after applying filters: size: %d", static_cast<int>(frameset.size()));
-            bool sent_depth_frame(false);
-            for (auto it = frameset.begin(); it != frameset.end(); ++it)
-            {
-                auto f = (*it);
-                auto stream_type = f.get_profile().stream_type();
-                auto stream_index = f.get_profile().stream_index();
-                auto stream_format = f.get_profile().format();
-                stream_index_pair sip{stream_type,stream_index};
-
-                ROS_DEBUG("Frameset contain (%s, %d, %s) frame. frame_number: %llu ; frame_TS: %f ; ros_TS(NSec): %lu",
-                            rs2_stream_to_string(stream_type), stream_index, rs2_format_to_string(stream_format), f.get_frame_number(), frame_time, t.nanoseconds());
-                if (f.is<rs2::video_frame>())
-                    ROS_DEBUG_STREAM("frame: " << f.as<rs2::video_frame>().get_width() << " x " << f.as<rs2::video_frame>().get_height());
-
-                if (f.is<rs2::points>())
+                if (sent_depth_frame) continue;
+                sent_depth_frame = true;
+                if (_align_depth_filter->is_enabled())
                 {
-                    publishPointCloud(f.as<rs2::points>(), t, frameset);
+                    publishFrame(f, t, COLOR,
+                            _depth_aligned_image,
+                            _depth_aligned_info_publisher,
+                            _depth_aligned_image_publishers,
+                            false);
                     continue;
                 }
-                if (stream_type == RS2_STREAM_DEPTH)
-                {
-                    if (sent_depth_frame) continue;
-                    sent_depth_frame = true;
-                    if (_align_depth_filter->is_enabled())
-                    {
-                        publishFrame(f, t, COLOR,
-                                    _depth_aligned_image,
-                                    _depth_aligned_info_publisher,
-                                    _depth_aligned_image_publishers,
-                                    false);
-                        continue;
-                    }
-                }
-                publishFrame(f, t, sip,
-                            _image,
-                            _info_publisher,
-                            _image_publishers);
             }
-            if (original_depth_frame && _align_depth_filter->is_enabled())
-            {
-                if (_colorizer_filter->is_enabled())
-                    original_depth_frame = _colorizer_filter->Process(original_depth_frame);
-                publishFrame(original_depth_frame, t,
-                                DEPTH,
-                                _image,
-                                _info_publisher,
-                                _image_publishers);
-            }
+            publishFrame(f, t, sip,
+                        _image,
+                        _info_publisher,
+                        _image_publishers);
         }
-        else if (frame.is<rs2::video_frame>())
+        if (original_depth_frame && _align_depth_filter->is_enabled())
         {
-            auto stream_type = frame.get_profile().stream_type();
-            auto stream_index = frame.get_profile().stream_index();
-            ROS_DEBUG("Single video frame arrived (%s, %d). frame_number: %llu ; frame_TS: %f ; ros_TS(NSec): %lu",
-                        rs2_stream_to_string(stream_type), stream_index, frame.get_frame_number(), frame_time, t.nanoseconds());
-            
-            stream_index_pair sip{stream_type,stream_index};
-            if (frame.is<rs2::depth_frame>())
-            {
-                if (_clipping_distance > 0)
-                {
-                    clip_depth(frame, _clipping_distance);
-                }
-            }
-            publishFrame(frame, t,
-                            sip,
-                            _image,
-                            _info_publisher,
-                            _image_publishers);
+            rs2::frame frame_to_send;
+            if (_colorizer_filter->is_enabled())
+                frame_to_send = _colorizer_filter->Process(original_depth_frame);
+            else
+                frame_to_send = original_depth_frame;
+                
+            publishFrame(frame_to_send, t,
+                        DEPTH,
+                        _image,
+                        _info_publisher,
+                        _image_publishers);
         }
     }
-    catch(const std::exception& ex)
+    else if (frame.is<rs2::video_frame>())
     {
-        ROS_ERROR_STREAM("An error has occurred during frame callback: " << ex.what());
+        auto stream_type = frame.get_profile().stream_type();
+        auto stream_index = frame.get_profile().stream_index();
+        ROS_DEBUG("Single video frame arrived (%s, %d). frame_number: %llu ; frame_TS: %f ; ros_TS(NSec): %lu",
+                    rs2_stream_to_string(stream_type), stream_index, frame.get_frame_number(), frame_time, t.nanoseconds());
+            
+        stream_index_pair sip{stream_type,stream_index};
+        if (frame.is<rs2::depth_frame>())
+        {
+            if (_clipping_distance > 0)
+            {
+                clip_depth(frame, _clipping_distance);
+            }
+        }
+        publishFrame(frame, t,
+                    sip,
+                    _image,
+                    _info_publisher,
+                    _image_publishers);
     }
     _synced_imu_publisher->Resume();
 } // frame_callback
@@ -650,17 +708,32 @@ bool BaseRealSenseNode::setBaseTime(double frame_time, rs2_timestamp_domain time
     return false;
 }
 
+uint64_t BaseRealSenseNode::millisecondsToNanoseconds(double timestamp_ms)
+{
+        // modf breaks input into an integral and fractional part
+        double int_part_ms, fract_part_ms;
+        fract_part_ms = modf(timestamp_ms, &int_part_ms);
+
+        //convert both parts to ns
+        static constexpr uint64_t milli_to_nano = 1000000;
+        uint64_t int_part_ns = static_cast<uint64_t>(int_part_ms) * milli_to_nano;
+        uint64_t fract_part_ns = static_cast<uint64_t>(std::round(fract_part_ms * milli_to_nano));
+
+        return int_part_ns + fract_part_ns;
+}
+
 rclcpp::Time BaseRealSenseNode::frameSystemTimeSec(rs2::frame frame)
 {
+    double timestamp_ms = frame.get_timestamp();
     if (frame.get_frame_timestamp_domain() == RS2_TIMESTAMP_DOMAIN_HARDWARE_CLOCK)
     {
-        double elapsed_camera_ns = (/*ms*/ frame.get_timestamp() - /*ms*/ _camera_time_base) * 1e6;
+        double elapsed_camera_ns = millisecondsToNanoseconds(timestamp_ms - _camera_time_base);
 
         /*
         Fixing deprecated-declarations compilation warning.
         Duration(rcl_duration_value_t) is deprecated in favor of 
         static Duration::from_nanoseconds(rcl_duration_value_t)
-        starting from GALAXY.
+        starting from GALACTIC.
         */
 #if defined(FOXY) || defined(ELOQUENT) || defined(DASHING)
         auto duration = rclcpp::Duration(elapsed_camera_ns);
@@ -672,7 +745,7 @@ rclcpp::Time BaseRealSenseNode::frameSystemTimeSec(rs2::frame frame)
     }
     else
     {
-        return rclcpp::Time(frame.get_timestamp() * 1e6);
+        return rclcpp::Time(millisecondsToNanoseconds(timestamp_ms));
     }
 }
 
@@ -792,9 +865,13 @@ void BaseRealSenseNode::publish_static_tf(const rclcpp::Time& t,
     msg.header.stamp = t;
     msg.header.frame_id = from;
     msg.child_frame_id = to;
+
+    // Convert x,y,z (taken from camera extrinsics)
+    // from optical cooridnates to ros coordinates
     msg.transform.translation.x = trans.z;
     msg.transform.translation.y = -trans.x;
     msg.transform.translation.z = -trans.y;
+
     msg.transform.rotation.x = q.getX();
     msg.transform.rotation.y = q.getY();
     msg.transform.rotation.z = q.getZ();
@@ -807,7 +884,6 @@ void BaseRealSenseNode::publishExtrinsicsTopic(const stream_index_pair& sip, con
     Extrinsics msg = rsExtrinsicsToMsg(ex);
     if (_extrinsics_publishers.find(sip) != _extrinsics_publishers.end())
     {
-        _extrinsics_msgs[sip] = msg; // We keep the message for periodically publish later if needed
         _extrinsics_publishers[sip]->publish(msg);
     }
 }
@@ -819,20 +895,30 @@ void BaseRealSenseNode::calcAndPublishStaticTransform(const rs2::stream_profile&
     tf2::Quaternion quaternion_optical;
     quaternion_optical.setRPY(-M_PI / 2, 0.0, -M_PI / 2);
     float3 zero_trans{0, 0, 0};
+    tf2::Quaternion zero_rot_quaternions;
+    zero_rot_quaternions.setRPY(0, 0, 0);
 
     rclcpp::Time transform_ts_ = _node.now();
 
-    rs2_extrinsics ex;
+    // extrinsic from A to B is the position of A relative to B
+    // TF from A to B is the transformation to be done on A to get to B
+    // so, we need to calculate extrinsics in two opposite ways, one for extrinsic topic
+    // and the second is for transformation topic (TF)
+    rs2_extrinsics normal_ex;  // used to for extrinsics topic
+    rs2_extrinsics tf_ex; // used for TF
+
     try
     {
-        ex = profile.get_extrinsics_to(base_profile);
+        normal_ex = base_profile.get_extrinsics_to(profile);
+        tf_ex = profile.get_extrinsics_to(base_profile);
     }
     catch (std::exception& e)
     {
         if (!strcmp(e.what(), "Requested extrinsics are not available!"))
         {
-            ROS_WARN_STREAM("(" << rs2_stream_to_string(profile.stream_type()) << ", " << profile.stream_index() << ") -> (" << rs2_stream_to_string(base_profile.stream_type()) << ", " << base_profile.stream_index() << "): " << e.what() << " : using unity as default.");
-            ex = rs2_extrinsics({{1, 0, 0, 0, 1, 0, 0, 0, 1}, {0,0,0}});
+            ROS_WARN_STREAM("(" << rs2_stream_to_string(base_profile.stream_type()) << ", " << base_profile.stream_index() << ") -> (" << rs2_stream_to_string(profile.stream_type()) << ", " << profile.stream_index() << "): " << e.what() << " : using unity as default.");
+            normal_ex = rs2_extrinsics({{1, 0, 0, 0, 1, 0, 0, 0, 1}, {0,0,0}});
+            tf_ex = normal_ex;
         }
         else
         {
@@ -840,13 +926,16 @@ void BaseRealSenseNode::calcAndPublishStaticTransform(const rs2::stream_profile&
         }
     }
 
-    auto Q = rotationMatrixToQuaternion(ex.rotation);
-    Q = quaternion_optical * Q * quaternion_optical.inverse();
+    // publish normal extrinsics e.g. /camera/extrinsics/depth_to_color
+    publishExtrinsicsTopic(sip, normal_ex);
 
-    float3 trans{ex.translation[0], ex.translation[1], ex.translation[2]};
+    // publish static TF
+    auto Q = rotationMatrixToQuaternion(tf_ex.rotation);
+    Q = quaternion_optical * Q * quaternion_optical.inverse();
+    float3 trans{tf_ex.translation[0], tf_ex.translation[1], tf_ex.translation[2]};
     publish_static_tf(transform_ts_, trans, Q, _base_frame_id, FRAME_ID(sip));
 
-    // Transform stream frame to stream optical frame
+    // Transform stream frame to stream optical frame and publish it
     publish_static_tf(transform_ts_, zero_trans, quaternion_optical, FRAME_ID(sip), OPTICAL_FRAME_ID(sip));
 
     if (profile.is<rs2::video_stream_profile>() && profile.stream_type() != RS2_STREAM_DEPTH && profile.stream_index() == 1)
@@ -854,7 +943,12 @@ void BaseRealSenseNode::calcAndPublishStaticTransform(const rs2::stream_profile&
         publish_static_tf(transform_ts_, trans, Q, _base_frame_id, ALIGNED_DEPTH_TO_FRAME_ID(sip));
         publish_static_tf(transform_ts_, zero_trans, quaternion_optical, ALIGNED_DEPTH_TO_FRAME_ID(sip), OPTICAL_FRAME_ID(sip));
     }
-    publishExtrinsicsTopic(sip, ex);
+
+    if ((_imu_sync_method > imu_sync_method::NONE) && (profile.stream_type() == RS2_STREAM_GYRO))
+    {
+        publish_static_tf(transform_ts_, zero_trans, zero_rot_quaternions, FRAME_ID(sip), IMU_FRAME_ID);
+        publish_static_tf(transform_ts_, zero_trans, quaternion_optical, IMU_FRAME_ID, IMU_OPTICAL_FRAME_ID);
+    }
 }
 
 void BaseRealSenseNode::SetBaseStream()
@@ -874,7 +968,7 @@ void BaseRealSenseNode::SetBaseStream()
     }
     
     std::vector<stream_index_pair>::const_iterator base_stream(base_stream_priority.begin());
-    while( (available_profiles.find(*base_stream) == available_profiles.end()) && (base_stream != base_stream_priority.end()))
+    while((base_stream != base_stream_priority.end()) && (available_profiles.find(*base_stream) == available_profiles.end()))
     {
         base_stream++;
     }
@@ -929,9 +1023,7 @@ void BaseRealSenseNode::startDynamicTf()
 void BaseRealSenseNode::publishDynamicTransforms()
 {
     // Publish transforms for the cameras
-
-    std::mutex mu;
-    std::unique_lock<std::mutex> lock(mu);
+    std::unique_lock<std::mutex> lock(_publish_dynamic_tf_mutex);
     while (rclcpp::ok() && _is_running && _tf_publish_rate > 0)
     {
         _cv_tf.wait_for(lock, std::chrono::milliseconds((int)(1000.0/_tf_publish_rate)), [&]{return (!(_is_running && _tf_publish_rate > 0));});
@@ -947,23 +1039,6 @@ void BaseRealSenseNode::publishDynamicTransforms()
             catch(const std::exception& e)
             {
                 ROS_ERROR_STREAM("Error publishing dynamic transforms: " << e.what());
-            }
-
-            // If static_tf was not created we need to publish the extrinsics periodically since it is not publishes as a latched topic.
-            if ( !_static_tf_broadcaster )
-            {
-                try
-                {
-                    for (const auto &extrinsics_publisher : _extrinsics_publishers)
-                    {
-                        const auto &ext_msg = _extrinsics_msgs[extrinsics_publisher.first];
-                        extrinsics_publisher.second->publish( ext_msg );
-                    }
-                }
-                catch (const std::exception &e)
-                {
-                    ROS_ERROR_STREAM("Error publishing extrinsics : " << e.what());
-                }
             }
         }
     }

@@ -1,3 +1,17 @@
+// Copyright 2023 Intel Corporation. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include <ros_sensor.h>
 
 using namespace realsense2_camera;
@@ -30,7 +44,8 @@ RosSensor::RosSensor(rs2::sensor sensor,
     std::function<void()> hardware_reset_func, 
     std::shared_ptr<diagnostic_updater::Updater> diagnostics_updater,
     rclcpp::Logger logger,
-    bool force_image_default_qos):
+    bool force_image_default_qos,
+    bool is_rosbag_file):
     rs2::sensor(sensor),
     _logger(logger),
     _origin_frame_callback(frame_callback),
@@ -46,12 +61,19 @@ RosSensor::RosSensor(rs2::sensor sensor,
             auto stream_type = frame.get_profile().stream_type();
             auto stream_index = frame.get_profile().stream_index();
             stream_index_pair sip{stream_type, stream_index};
-            if (_frequency_diagnostics.find(sip) != _frequency_diagnostics.end())
-                _frequency_diagnostics.at(sip).Tick();
-
-            _origin_frame_callback(frame);
+            try
+            {
+                _origin_frame_callback(frame);
+                if (_frequency_diagnostics.find(sip) != _frequency_diagnostics.end())
+                    _frequency_diagnostics.at(sip).Tick();
+            }
+            catch(const std::exception& ex)
+            {
+                // don't tick the frequency diagnostics for this publisher
+                ROS_ERROR_STREAM("An error has occurred during frame callback: " << ex.what());
+            }
         };
-    setParameters();
+    setParameters(is_rosbag_file);
 }
 
 RosSensor::~RosSensor()
@@ -60,11 +82,16 @@ RosSensor::~RosSensor()
     stop();
 }
 
-void RosSensor::setParameters()
+void RosSensor::setParameters(bool is_rosbag_file)
 {
     std::string module_name = create_graph_resource_name(rs2_to_ros(get_info(RS2_CAMERA_INFO_NAME)));
     _params.registerDynamicOptions(*this, module_name);
-    UpdateSequenceIdCallback();
+
+    // for rosbag files, don't set hdr(sequence_id) / gain / exposure options
+    // since these options can be changed only in real devices
+    if(!is_rosbag_file)
+        UpdateSequenceIdCallback();
+    
     registerSensorParameters();
 }
 
@@ -217,7 +244,7 @@ void RosSensor::stop()
 {
     if (get_active_streams().size() == 0)
         return;
-    ROS_INFO_STREAM("Stop Sensor: " << get_info(RS2_CAMERA_INFO_NAME));
+    ROS_INFO_STREAM("Stop Sensor: " << rs2_to_ros(get_info(RS2_CAMERA_INFO_NAME)));
     _frequency_diagnostics.clear();
 
     try
@@ -310,13 +337,13 @@ bool RosSensor::getUpdatedProfiles(std::vector<stream_profile>& wanted_profiles)
         profile_manager->addWantedProfiles(wanted_profiles);        
     }
 
-    ROS_DEBUG_STREAM(get_info(RS2_CAMERA_INFO_NAME) << ":" << "active_profiles.size() = " << active_profiles.size());
+    ROS_DEBUG_STREAM(rs2_to_ros(get_info(RS2_CAMERA_INFO_NAME)) << ":" << "active_profiles.size() = " << active_profiles.size());
     for (auto& profile : active_profiles)
     {
         ROS_DEBUG_STREAM("Sensor profile: " << ProfilesManager::profile_string(profile));
     }
 
-    ROS_DEBUG_STREAM(get_info(RS2_CAMERA_INFO_NAME) << ":" << "wanted_profiles");
+    ROS_DEBUG_STREAM(rs2_to_ros(get_info(RS2_CAMERA_INFO_NAME)) << ":" << "wanted_profiles");
     for (auto& profile : wanted_profiles)
     {
         ROS_DEBUG_STREAM("Sensor profile: " << ProfilesManager::profile_string(profile));
