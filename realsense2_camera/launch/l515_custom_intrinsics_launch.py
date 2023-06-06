@@ -152,7 +152,10 @@ def generate_launch_description():
                 namespace=LaunchConfiguration("camera_name"),
                 name=LaunchConfiguration("camera_name"),
                 executable='republish_cam_info',
-                parameters=[
+                
+                parameters=[os.path.join(
+                get_package_share_directory('realsense2_camera'),
+                'config', 'l515_camera_parameters.yaml')
                     #{"use_sim_time": False},
                     ],
                 output='screen',
