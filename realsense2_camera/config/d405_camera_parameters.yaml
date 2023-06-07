@@ -1,9 +1,9 @@
 # Node name
-/L515/l515:
+/D405/d405:
   ros__parameters:
       #camera name
-      cam_name: "L515"
-      
+      cam_name: "D405"
+
       # Distortion parameters D = (k1, k2, t1, t2, k3)
       D: [0.10119861778233893, -0.1954721576865799, 0.0012448486976424538, 0.00191865834729546, 0.0]
 

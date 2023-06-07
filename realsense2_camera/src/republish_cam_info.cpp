@@ -17,9 +17,16 @@ class RepublishCameraInfo : public rclcpp::Node
     RepublishCameraInfo()
     : Node("republish_cam_info")
     {
+      std::string cam_name = this->declare_parameter<std::string>("cam_name","camera");
+      RCLCPP_INFO(this->get_logger(), "cam_name: '%s'", cam_name.c_str());
+      std::string cam_info_topic = "/" + cam_name + "/color/camera_info_factory";
+      RCLCPP_INFO(this->get_logger(), "cam_info_topic: '%s'", cam_info_topic.c_str());
+      std::string cam_info_remap_topic = "/" + cam_name + "/color/camera_info_custom";
+      RCLCPP_INFO(this->get_logger(), "cam_info_remap_topic: '%s'", cam_info_remap_topic.c_str());
+
       subscription_ = this->create_subscription<sensor_msgs::msg::CameraInfo>(
-      "/camera/color/camera_info_factory", 10, std::bind(&RepublishCameraInfo::topic_callback, this, std::placeholders::_1));
-      publisher_ = this->create_publisher<sensor_msgs::msg::CameraInfo>("/camera/color/camera_info", 10);
+      cam_info_topic, 10, std::bind(&RepublishCameraInfo::topic_callback, this, std::placeholders::_1));
+      publisher_ = this->create_publisher<sensor_msgs::msg::CameraInfo>(cam_info_remap_topic, 10);
     
     this->declare_parameter<std::vector<double>>("D",std::vector<double>(5, 0.1));
     this->declare_parameter<std::vector<double>>("K",std::vector<double>(9, 0.1));

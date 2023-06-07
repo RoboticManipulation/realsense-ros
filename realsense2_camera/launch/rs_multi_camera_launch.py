@@ -33,8 +33,14 @@ import pathlib
 sys.path.append(str(pathlib.Path(__file__).parent.absolute()))
 import rs_launch
 
-local_parameters = [{'name': 'camera_name1', 'default': 'camera1', 'description': 'camera unique name'},
-                    {'name': 'camera_name2', 'default': 'camera2', 'description': 'camera unique name'},
+local_parameters = [
+                    #L515 camera
+                    {'name': 'camera_name1', 'default': 'L515', 'description': 'camera L515'},
+                    {'name': 'device_type1',  'default': 'l515', 'description': 'device L515'},
+
+                    #D405 camera
+                    {'name': 'camera_name2', 'default': 'D405', 'description': 'camera l515'},
+                    {'name': 'device_type2',  'default': 'd405', 'description': 'device d405'},
                    ]
 
 def set_configurable_parameters(local_params):
