@@ -78,20 +78,7 @@ def generate_launch_description():
             PythonLaunchDescriptionSource([ThisLaunchFileDir(), '/rs_launch.py']),
             launch_arguments=set_configurable_parameters(params1).items(),
             ),
-            launch_ros.actions.Node(
-                    package='realsense2_camera',
-                    namespace=LaunchConfiguration("camera_name1"),
-                    name=LaunchConfiguration("device_type1"),
-                    executable='republish_cam_info',
-                    parameters=[os.path.join(
-                    get_package_share_directory('realsense2_camera'),
-                    'config', 'l515_camera_parameters.yaml')
-                        #{"use_sim_time": False},
-                        ],
-                    output='screen',
-                    arguments=['--ros-args', '--log-level', LaunchConfiguration('log_level')],
-                    emulate_tty=True,
-                    ),
+            
         ],
         condition=launch.conditions.IfCondition(l515_custom),
 
@@ -106,20 +93,7 @@ def generate_launch_description():
             PythonLaunchDescriptionSource([ThisLaunchFileDir(), '/rs_launch.py']),
             launch_arguments=set_configurable_parameters(params2).items(),
             ),
-            launch_ros.actions.Node(
-                    package='realsense2_camera',
-                    namespace=LaunchConfiguration("camera_name2"),
-                    name=LaunchConfiguration("device_type2"),
-                    executable='republish_cam_info',
-                    parameters=[os.path.join(
-                    get_package_share_directory('realsense2_camera'),
-                    'config', 'd405_camera_parameters.yaml')
-                        #{"use_sim_time": False},
-                        ],
-                    output='screen',
-                    arguments=['--ros-args', '--log-level', LaunchConfiguration('log_level')],
-                    emulate_tty=True,
-                    ),
+            
         ],
         condition=launch.conditions.IfCondition(d405_custom),
     )
@@ -147,4 +121,38 @@ def generate_launch_description():
         launch_l515_custom,
         launch_d405,
         launch_d405_custom,
+
+        launch_ros.actions.Node(
+                    package='realsense2_camera',
+                    namespace=LaunchConfiguration("camera_name1"),
+                    name=LaunchConfiguration("device_type1"),
+                    executable='republish_cam_info',
+                    parameters=[os.path.join(
+                    get_package_share_directory('realsense2_camera'),
+                    'config', 'l515_camera_parameters.yaml')
+                        #{"use_sim_time": False},
+                        ],
+                    output='screen',
+                    arguments=['--ros-args', '--log-level', LaunchConfiguration('log_level')],
+                    emulate_tty=True,
+                    condition=launch.conditions.IfCondition(l515_custom),
+
+                    ),
+        
+        launch_ros.actions.Node(
+                    package='realsense2_camera',
+                    namespace=LaunchConfiguration("camera_name2"),
+                    name=LaunchConfiguration("device_type2"),
+                    executable='republish_cam_info',
+                    parameters=[os.path.join(
+                    get_package_share_directory('realsense2_camera'),
+                    'config', 'd405_camera_parameters.yaml')
+                        #{"use_sim_time": False},
+                        ],
+                    output='screen',
+                    arguments=['--ros-args', '--log-level', LaunchConfiguration('log_level')],
+                    emulate_tty=True,
+                    condition=launch.conditions.IfCondition(d405_custom),
+                    ),
+
     ])

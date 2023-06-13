@@ -21,7 +21,7 @@ class RepublishCameraInfo : public rclcpp::Node
       RCLCPP_INFO(this->get_logger(), "cam_name: '%s'", cam_name.c_str());
       std::string cam_info_topic = "/" + cam_name + "/color/camera_info_factory";
       RCLCPP_INFO(this->get_logger(), "cam_info_topic: '%s'", cam_info_topic.c_str());
-      std::string cam_info_remap_topic = "/" + cam_name + "/color/camera_info_custom";
+      std::string cam_info_remap_topic = "/" + cam_name + "/color/camera_info";
       RCLCPP_INFO(this->get_logger(), "cam_info_remap_topic: '%s'", cam_info_remap_topic.c_str());
 
       subscription_ = this->create_subscription<sensor_msgs::msg::CameraInfo>(
