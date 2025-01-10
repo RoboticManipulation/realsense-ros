@@ -27,7 +27,11 @@ def launch_setup(context, *args, **kwargs):
             executable='static_transform_publisher',
             name='static_transform_publisher',
             output="screen",
-            arguments=['0.0060', '0.0900', '0.04', '-0.018', '-0.148', '0.987', '-0.053', 'wrist_3_link', 'camera_color_optical_frame'],
+            # nils
+            arguments=['-0.005', '0.1370', '0.00548', '0.0148379', '-0.1494206', '0.9886599', '-0.0021957', 'wrist_3_link', 'camera_color_optical_frame'],
+            # old
+            # arguments=['0.0060', '0.0900', '0.04', '-0.018', '-0.148', '0.987', '-0.053', 'wrist_3_link', 'camera_color_optical_frame'],
+            # don't know
             # arguments=['0.0060', '0.0900', '0.04', '-3.0313102', '-0.0198611', '0.2987771', 'wrist_3_link', 'camera_color_optical_frame'],
             parameters=[{"use_sim_time": use_sim_time}],
         )
