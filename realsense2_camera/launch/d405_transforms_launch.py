@@ -29,7 +29,8 @@ def launch_setup(context, *args, **kwargs):
             output="screen",
             #arguments=['0.012', '0.083', '0.034', '0.005', '-0.140', '0.990', '-0.001', 'wrist_3_link', 'camera_color_optical_frame'], # Tobias
             #arguments=['0.012', '0.085', '0.034', '0.005', '-0.140', '0.990', '-0.001', 'wrist_3_link', 'camera_color_optical_frame'], # Tobias adjusted y
-            arguments=['0.012', '0.085', '0.035', '0.005', '-0.149', '0.989', '-0.001', 'wrist_3_link', 'camera_color_optical_frame'], #Adjusted roll
+            arguments=['0.012', '0.085', '0.035', '0.005', '-0.149', '0.989', '-0.001', 'wrist_3_link', 'camera_color_optical_frame'], #Adjusted roll - Calibration for UR5
+            # arguments=['0.140708', '-0.001375882', '0.045030005', '-0.126', '0.034', '0.956', '-0.262', 'mount_reference', 'camera_color_optical_frame'], # Guess for UR3e 
             # 0.012, 0.100, 0.050 0.005, -0.149, 0.989, -0.001 #Adjusted z and roll
             parameters=[{"use_sim_time": use_sim_time}],
         )
